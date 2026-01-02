@@ -1,4 +1,5 @@
 from copy import deepcopy
+from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -74,7 +75,7 @@ def draw_marker(
     *,
     inner_r: float = 0.72,
     outer_r: float = 1.0,
-    label_r: float = 0.68,
+    label_r: float = 0.85,
     color: str = "crimson",
     lw: float = 2.5,
 ):
@@ -106,11 +107,7 @@ def draw_marker(
     )
 
     # Label
-    sign = marker.sign
-    pos = marker.pos
-    deg = marker.pos.deg
-    minute = marker.pos.min
-    label = f"{marker_name} {sign} {deg}°{minute}'" if sign else f"{marker_name}"
+    label = f"{marker_name}"
     ax.text(
         theta,
         label_r,
@@ -169,6 +166,48 @@ def draw_cusp(
         )
 
 
+## To resolve issues with conjunct planets ##
+def cluster_by_longitude(
+    planet_names: List[str], planets: List[Body], threshold_deg=3.0
+) -> List[List[str]]:
+    """
+    items: list of Planets
+    Returns list of clusters, each a list of Planets.
+    Handles wrap-around at 0/360.
+    """
+    # create list of key, value pairs for planet names and longitudes
+    k_v_pairs = [
+        {"planet": planet_names[i], "longitude": planets[i].lon}
+        for i in range(0, len(planet_names))
+    ]
+
+    # sort by longitude
+    sorted_pairs = sorted(k_v_pairs, key=lambda p: p["longitude"])
+
+    clusters = []
+
+    curr = [sorted_pairs[0]]
+
+    for prev, item in zip(sorted_pairs, sorted_pairs[1:]):
+        if (item["longitude"] - prev["longitude"]) <= threshold_deg:
+            curr.append(item)
+        else:
+            clusters.append(curr)
+            curr = [item]
+
+    clusters.append(curr)
+
+    # merge first and last if they wrap around near 0/360
+    if len(clusters) > 1:
+        first = clusters[0]
+        last = clusters[-1]
+        if (first[0]["longitude"] + 360.0) - last[-1]["longitude"] <= threshold_deg:
+            clusters[0] = last + first
+            clusters.pop()
+
+    return clusters
+
+
 PLANET_ORDER = [
     "Sun",
     "Moon",
@@ -205,6 +244,7 @@ def draw_planet(
     planet: Body,
     planet_name: str,
     *,
+    glyph_theta_offset_deg: float = 0.0,
     line_start_r: float = 1.0,  # start at wheel edge
     line_end_r: float = 1.12,  # extend outside the wheel
     glyph_r: float = 1.18,  # glyph position (outside)
@@ -220,14 +260,17 @@ def draw_planet(
     lon = float(planet.lon) % 360.0
     theta = np.deg2rad(lon)
 
-    # Leader line from the wheel edge outward
+    # Leader line from the wheel edge outward, at TRUE longitude
     ax.plot([theta, theta], [line_start_r, line_end_r], color=color, lw=lw, zorder=30)
+
+    # glyph offset tangentially (only the glyph position changes)
+    theta_glyph = np.deg2rad((lon + glyph_theta_offset_deg) % 360.0)
 
     # Glyph at the end (outside the wheel)
     glyph = PLANET_GLYPHS.get(planet_name, planet_name[:2])
 
     ax.text(
-        theta,
+        theta_glyph,
         glyph_r,
         glyph,
         fontsize=fontsize,
@@ -236,6 +279,87 @@ def draw_planet(
         color=color,
         zorder=31,
     )
+
+
+def _lon_to_xy_for_wheel(lon_deg: float, r: float) -> tuple[float, float]:
+    """
+    Convert longitude to x,y for YOUR wheel convention:
+      - 0° at 9 o'clock (W)
+      - increases counter-clockwise
+    """
+    ang = np.deg2rad(lon_deg % 360.0) + np.pi
+    return r * np.cos(ang), r * np.sin(ang)
+
+
+def draw_aspect_line(
+    ax,
+    planet1,
+    planet2,
+    *,
+    aspect_r: float = 0.72,  # radius where aspect endpoints sit (near/inside inner ring)
+    color: str = "red",
+    lw: float = 1.2,
+    alpha: float = 0.7,
+    label: str | None = None,
+    label_color: str = "black",
+    label_fontsize: int = 9,
+):
+    """
+    Draw a straight aspect chord between two longitudes on the inner circle
+    and optionally place a label at the midpoint.
+
+    IMPORTANT: This draws on a transparent Cartesian overlay axis so the chord is truly straight.
+    Assumes planet.lon values are already rotated into your wheel coordinates.
+    """
+    lon1 = float(planet1.lon) % 360.0
+    lon2 = float(planet2.lon) % 360.0
+
+    x1, y1 = _lon_to_xy_for_wheel(lon1, aspect_r)
+    x2, y2 = _lon_to_xy_for_wheel(lon2, aspect_r)
+
+    # Create (or reuse) a transparent overlay cartesian axis
+    fig = ax.figure
+    if not hasattr(ax, "_aspect_ax"):
+        aspect_ax = fig.add_axes(ax.get_position(), frameon=False)
+        aspect_ax.set_xlim(-1.3, 1.3)
+        aspect_ax.set_ylim(-1.3, 1.3)
+        aspect_ax.set_aspect("equal", adjustable="box")
+        aspect_ax.axis("off")
+        ax._aspect_ax = aspect_ax
+    else:
+        aspect_ax = ax._aspect_ax
+
+    # Draw the chord
+    aspect_ax.plot([x1, x2], [y1, y2], color=color, lw=lw, alpha=alpha, zorder=5)
+
+    # --- Label at midpoint ---------------------------------
+    if label:
+        mx = (x1 + x2) / 2.0
+        my = (y1 + y2) / 2.0
+
+        aspect_ax.text(
+            mx,
+            my,
+            label,
+            ha="center",
+            va="center",
+            fontsize=label_fontsize,
+            color=label_color,
+            zorder=6,
+            bbox=dict(
+                boxstyle="round,pad=0.15",
+                fc="white",
+                ec="none",
+                alpha=0.8,
+            ),
+        )
+
+
+def get_planet_index_in_cluster(clusters, planet_name: str):
+    for cluster in clusters:
+        for i, item in enumerate(cluster):
+            if item["planet"] == planet_name:
+                return i
 
 
 def _rotate_lon(lon: float, asc_lon: float) -> float:
@@ -287,18 +411,35 @@ def render_astrological_chart(
     for house in rotated_data.houses.cusps.keys():
         draw_cusp(ax, rotated_data.houses.cusps[house], house)
 
-    i = 0
+    planetary_clusters = cluster_by_longitude(
+        planet_names=list(rotated_data.planets.bodies.keys()),
+        planets=list(rotated_data.planets.bodies.values()),
+    )
+
     for planet in rotated_data.planets.bodies.keys():
-        i += 1
         if planet not in ["Mean N.Node", "Mean S.Node"]:
+            planet_index_in_cluster = get_planet_index_in_cluster(
+                planetary_clusters, planet
+            )
+
+            print(f"Planet {planet} in cluster: {planet_index_in_cluster}")
+
             draw_planet(
                 ax,
                 rotated_data.planets.bodies[planet],
                 planet,
                 color=f"{'red' if rotated_data.planets.bodies[planet].motion == 'RETRO' else 'black'}",
-                # TODO Handle rendering of conjuect planets better
-                # line_end_r=1.12 if i // 2 == 0 else 1.18,
-                # glyph_r=1.18 if i // 2 == 0 else 1.24,
+                glyph_r=1.18 + planet_index_in_cluster * 0.05,
+            )
+
+    for aspect in rotated_data.aspects:
+        if aspect.aspect.name != "Conjunction":
+            draw_aspect_line(
+                ax,
+                rotated_data.planets.bodies[aspect.body1],
+                rotated_data.planets.bodies[aspect.body2],
+                color=f"{'blue' if aspect.aspect.name in ['Trine', 'Sextile'] else 'red'}",
+                label=aspect.aspect.symbol,
             )
 
     return fig

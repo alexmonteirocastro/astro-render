@@ -3,7 +3,9 @@
 
 A second iteration of astro engine but this time it contains a finction to render graph. 
 
-**Note:** This project is a WIP
+This one showcases the graphical astrological chart. 
+
+This is the secodn iteration of Astro Engine, more will follow. 
 
 
 ### Virtual environment (recommended)
