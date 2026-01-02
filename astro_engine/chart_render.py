@@ -422,8 +422,6 @@ def render_astrological_chart(
                 planetary_clusters, planet
             )
 
-            print(f"Planet {planet} in cluster: {planet_index_in_cluster}")
-
             draw_planet(
                 ax,
                 rotated_data.planets.bodies[planet],
